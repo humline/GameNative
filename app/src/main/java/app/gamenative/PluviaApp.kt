@@ -142,8 +142,7 @@ class PluviaApp : SplitCompatApplication() {
             apiKey = BuildConfig.POSTHOG_API_KEY,
             host = BuildConfig.POSTHOG_HOST,
         ).apply {
-            /* turn every event into an identified one */
-            personProfiles = PersonProfiles.ALWAYS
+            personProfiles = PersonProfiles.NEVER
             propertiesSanitizer = PostHogPropertiesSanitizer { properties ->
                 // SDK deep-link capture copies every query parameter (OAuth code, relay token,
                 // nxm key) into its own property. Our own events only carry https urls, so a
@@ -161,6 +160,11 @@ class PluviaApp : SplitCompatApplication() {
             }
         }
         PostHogAndroid.setup(this, postHogConfig)
+        if (PrefManager.usageAnalyticsEnabled) {
+            com.posthog.PostHog.optIn()
+        } else {
+            com.posthog.PostHog.optOut()
+        }
         com.posthog.PostHog.register("build_flavor", BuildConfig.FLAVOR)
         DeviceInfo.registerSuperProperties(this)
         Thread({ DeviceInfo.registerGpuSuperProperties(applicationContext) }, "device-info").apply { isDaemon = true }.start()

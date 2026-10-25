@@ -232,6 +232,9 @@
     <string name="game_not_installed_title">Game Not Installed</string>
     <string name="game_not_installed_message">%s is not installed. Please install the game first before launching.</string>
     <string name="intent_launch_failed">Could not launch game: invalid launch shortcut</string>
+    <string name="external_launch_confirm_title">External game launch</string>
+    <string name="external_launch_confirm_message">Another app asked GameNative to start a game. Do you want to continue?</string>
+    <string name="external_launch_confirm_action">Launch game</string>
     <string name="intent_launch_steam_pending">Game will launch when Steam connects</string>
     <string name="intent_launch_service_pending">Game will launch when service is ready</string>
     <string name="intent_launch_steam_login_failed">Steam login failed — game launch cancelled</string>

@@ -2,6 +2,8 @@ package app.gamenative.utils
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
@@ -20,14 +22,33 @@ object UpdateInstaller {
         onProgress: (Float) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            if (!versionName.matches(Regex("[A-Za-z0-9._-]+"))) {
+                Timber.e("Rejecting update with invalid version name")
+                return@withContext false
+            }
+            val expectedFileName = "gamenative-v$versionName.apk"
+            val uri = Uri.parse(downloadUrl)
+            val fileName = uri.lastPathSegment
+            if (
+                uri.scheme != "https" ||
+                uri.host !in setOf(
+                    "downloads.gamenative.app",
+                    "pub-9fcd5294bd0d4b85a9d73615bf98f3b5.r2.dev",
+                ) ||
+                uri.userInfo != null ||
+                uri.port !in listOf(-1, 443) ||
+                fileName == null ||
+                fileName != expectedFileName ||
+                !fileName.matches(Regex("[A-Za-z0-9._-]+"))
+            ) {
+                Timber.e("Rejecting update URL outside the expected download source")
+                return@withContext false
+            }
+
             val apkFileName = "gamenative-v$versionName.apk"
             val destFile = File(context.cacheDir, apkFileName)
 
-            // Extract filename from URL for fetchFileWithFallback
-            // The URL should be like: https://downloads.gamenative.app/gamenative-v0.5.3.apk
-            val fileName = downloadUrl.substringAfterLast("https://downloads.gamenative.app/")
-
-            Timber.i("Downloading update: $fileName from URL: $downloadUrl")
+            Timber.i("Downloading update: $fileName")
             Timber.i("Saving to: ${destFile.absolutePath}")
 
             // Use the existing fetchFileWithFallback method which handles fallback URLs
@@ -50,26 +71,98 @@ object UpdateInstaller {
                 return@withContext false
             }
 
+            if (!matchesInstalledSigningIdentity(context, destFile)) {
+                destFile.delete()
+                Timber.e("Downloaded APK package or signing identity does not match this installation")
+                return@withContext false
+            }
+
             Timber.i("Download complete: ${destFile.absolutePath}, size: $fileSize bytes")
 
             // Install the APK
-            withContext(Dispatchers.Main) {
+            val installStarted = withContext(Dispatchers.Main) {
                 installApk(context, destFile)
             }
 
-            return@withContext true
+            return@withContext installStarted
         } catch (e: Exception) {
             Timber.e(e, "Error downloading/installing update")
             return@withContext false
         }
     }
 
-    private fun installApk(context: Context, apkFile: File) {
+    private fun matchesInstalledSigningIdentity(context: Context, apkFile: File): Boolean {
+        val packageManager = context.packageManager
+        val installed = packageInfo(packageManager, context.packageName, 0) ?: return false
+        val downloaded = packageManager.getPackageArchiveInfo(
+            apkFile.absolutePath,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                @Suppress("DEPRECATION")
+                PackageManager.GET_SIGNATURES
+            },
+        ) ?: return false
+        if (downloaded.packageName != context.packageName) return false
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val installedSigningInfo = installed.signingInfo ?: return false
+            val downloadedSigningInfo = downloaded.signingInfo ?: return false
+            if (installedSigningInfo.hasMultipleSigners() || downloadedSigningInfo.hasMultipleSigners()) {
+                return installedSigningInfo.hasMultipleSigners() &&
+                    downloadedSigningInfo.hasMultipleSigners() &&
+                    signingCertificates(installed).sameCertificates(signingCertificates(downloaded))
+            }
+
+            val installedCurrentSigner = installedSigningInfo.apkContentsSigners.singleOrNull()?.toByteArray()
+                ?: return false
+            return downloadedSigningInfo.signingCertificateHistory
+                ?.any { it.toByteArray().contentEquals(installedCurrentSigner) } == true
+        }
+        return signingCertificates(installed).sameCertificates(signingCertificates(downloaded))
+    }
+
+    private fun packageInfo(packageManager: PackageManager, packageName: String, flags: Int): PackageInfo? =
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager.PackageInfoFlags.of(flags.toLong()),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, flags)
+            }
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
+
+    private fun signingCertificates(packageInfo: PackageInfo): List<ByteArray> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.signingInfo?.let { signingInfo ->
+                val signatures = if (signingInfo.hasMultipleSigners()) {
+                    signingInfo.apkContentsSigners
+                } else {
+                    signingInfo.signingCertificateHistory
+                }
+                signatures?.map { it.toByteArray() }.orEmpty()
+            }.orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.signatures?.map { it.toByteArray() }.orEmpty()
+        }
+
+    private fun List<ByteArray>.sameCertificates(other: List<ByteArray>): Boolean =
+        size == other.size && all { certificate ->
+            other.any { otherCertificate -> certificate.contentEquals(otherCertificate) }
+        }
+
+    private fun installApk(context: Context, apkFile: File): Boolean {
         try {
             // Verify file exists before attempting installation
             if (!apkFile.exists()) {
                 Timber.e("APK file does not exist: ${apkFile.absolutePath}")
-                return
+                return false
             }
 
             Timber.i("Installing APK from: ${apkFile.absolutePath}, size: ${apkFile.length()} bytes")
@@ -84,7 +177,7 @@ object UpdateInstaller {
                     )
                 } catch (e: Exception) {
                     Timber.e(e, "Error getting FileProvider URI")
-                    return
+                    return false
                 }
             } else {
                 // Use file:// URI for older versions
@@ -114,9 +207,10 @@ object UpdateInstaller {
 
             context.startActivity(intent)
             Timber.i("Install intent launched successfully")
+            return true
         } catch (e: Exception) {
             Timber.e(e, "Error launching install intent")
+            return false
         }
     }
 }
-

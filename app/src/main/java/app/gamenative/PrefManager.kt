@@ -1847,7 +1847,7 @@ object PrefManager {
 
     private val USAGE_ANALYTICS_ENABLED = booleanPreferencesKey("usage_analytics_enabled")
     var usageAnalyticsEnabled: Boolean
-        get() = getPref(USAGE_ANALYTICS_ENABLED, true)
+        get() = getPref(USAGE_ANALYTICS_ENABLED, false)
         set(value) { setPref(USAGE_ANALYTICS_ENABLED, value) }
 
     private val NEXUS_LAST_PLACEMENT_JSON = stringPreferencesKey("nexus_last_placement_json")

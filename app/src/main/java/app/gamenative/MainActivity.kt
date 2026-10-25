@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.OrientationEventListener
+import android.app.AlertDialog
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -361,23 +362,18 @@ class MainActivity : ComponentActivity() {
             val launchRequest = IntentLaunchManager.parseLaunchIntent(intent, applicationContext)
             if (launchRequest != null) {
                 Timber.d("[IntentLaunch]: Received external launch intent for app ${launchRequest.appId}")
-
-                if (isNewIntent) {
-                    // supersedes any stale pending request
-                    consumePendingLaunchRequest()
-                    // UI is already up — emit directly, ViewModel listener exists
-                    Timber.d("[IntentLaunch]: Emitting ExternalGameLaunch event for app ${launchRequest.appId}")
-                    launchRequest.containerConfig?.let { config ->
-                        IntentLaunchManager.applyTemporaryConfigOverride(this, launchRequest.appId, config)
+                setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.external_launch_confirm_title)
+                    .setMessage(R.string.external_launch_confirm_message)
+                    .setNegativeButton(android.R.string.cancel) { _, _ ->
+                        wasLaunchedViaExternalIntent = false
                     }
-                    lifecycleScope.launch {
-                        PluviaApp.events.emit(AndroidEvent.ExternalGameLaunch(launchRequest.appId, launchRequest.execArgs))
+                    .setPositiveButton(R.string.external_launch_confirm_action) { _, _ ->
+                        acceptExternalLaunch(launchRequest, isNewIntent)
                     }
-                } else {
-                    // cold start — store as pending, PluviaMain consumes when UI is ready
-                    setPendingLaunchRequest(launchRequest)
-                    Timber.d("[IntentLaunch]: Stored pending launch request for app ${launchRequest.appId}")
-                }
+                    .setOnCancelListener { wasLaunchedViaExternalIntent = false }
+                    .show()
             } else if (intent.action == "${BuildConfig.APPLICATION_ID}.LAUNCH_GAME") {
                 // intent matched our action but failed to parse — tell the user
                 wasLaunchedViaExternalIntent = false
@@ -386,6 +382,20 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             Timber.e(e, "[IntentLaunch]: Failed to handle launch intent")
+        }
+    }
+
+    private fun acceptExternalLaunch(request: IntentLaunchManager.LaunchRequest, isNewIntent: Boolean) {
+        if (isNewIntent) {
+            consumePendingLaunchRequest()
+            request.containerConfig?.let { config ->
+                IntentLaunchManager.applyTemporaryConfigOverride(this, request.appId, config)
+            }
+            lifecycleScope.launch {
+                PluviaApp.events.emit(AndroidEvent.ExternalGameLaunch(request.appId, request.execArgs))
+            }
+        } else {
+            setPendingLaunchRequest(request)
         }
     }
 

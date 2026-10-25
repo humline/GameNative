@@ -87,6 +87,11 @@ fun SettingsGroupInfo() {
             onCheckedChange = {
                 usageAnalytics = it
                 PrefManager.usageAnalyticsEnabled = it
+                if (it) {
+                    com.posthog.PostHog.optIn()
+                } else {
+                    com.posthog.PostHog.optOut()
+                }
             },
         )
     }

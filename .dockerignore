@@ -1,0 +1,12 @@
+.git
+.gradle
+**/.gradle
+**/build
+**/local.properties
+**/*.apk
+app/keystores
+/keystore
+**/keystore
+**/*.jks
+**/*.keystore
+**/keystore.properties
